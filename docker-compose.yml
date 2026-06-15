@@ -1,0 +1,78 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      APP_URL: http://localhost:${APP_PORT:-8000}
+      PHP_CLI_SERVER_WORKERS: "1"
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: notifications
+      DB_USERNAME: notifications
+      DB_PASSWORD: secret
+      QUEUE_CONNECTION: database
+      CACHE_STORE: database
+      SESSION_DRIVER: database
+    volumes:
+      - ./:/var/www/html
+      - vendor:/var/www/html/vendor
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "composer install --no-interaction &&
+             if ! grep -qE '^APP_KEY=base64:.+' .env 2>/dev/null; then php artisan key:generate --force --no-interaction; fi &&
+             php artisan config:clear --no-interaction &&
+             php artisan migrate --force --no-interaction &&
+             php artisan serve --host=0.0.0.0 --port=8000"
+
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: notifications
+      DB_USERNAME: notifications
+      DB_PASSWORD: secret
+      QUEUE_CONNECTION: database
+      CACHE_STORE: database
+    volumes:
+      - ./:/var/www/html
+      - vendor:/var/www/html/vendor
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "composer install --no-interaction &&
+             php artisan queue:work --tries=3 --backoff=5,15,30 --sleep=1"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: notifications
+      POSTGRES_USER: notifications
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notifications -d notifications"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  vendor:
